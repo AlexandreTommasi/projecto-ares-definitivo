@@ -35,11 +35,11 @@ jobs:
           
           # Update next.config if exists to use standalone mode
           if [ -f "next.config.js" ]; then
-            if ! grep -q "output.*:.*['"]standalone['"]" next.config.js; then
+            if ! grep -q "output.*:.*standalone" next.config.js; then
               sed -i "s/module.exports = {/module.exports = {\n  output: 'standalone',/" next.config.js
             fi
           elif [ -f "next.config.mjs" ]; then
-            if ! grep -q "output.*:.*['"]standalone['"]" next.config.mjs; then
+            if ! grep -q "output.*:.*standalone" next.config.mjs; then
               sed -i "s/const nextConfig = {/const nextConfig = {\n  output: 'standalone',/" next.config.mjs
             fi
           fi
