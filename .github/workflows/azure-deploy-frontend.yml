@@ -23,11 +23,26 @@ jobs:
         with:
           node-version: '22.x'
 
-      - name: Create environment file for frontend
+      - name: Create environment files
         working-directory: ./frontend
         run: |
-          echo "NEXT_PUBLIC_API_URL=https://expandev-01.azurewebsites.net/api/v1" > .env.production
+          # Create .env.production for build time
+          echo "NEXT_PUBLIC_API_URL=https://expandev-01.azurewebsites.net" > .env.production
           echo "NODE_ENV=production" >> .env.production
+          
+          # Create .env.local for runtime (Azure)
+          echo "NEXT_PUBLIC_API_URL=https://expandev-01.azurewebsites.net" > .env.local
+          
+          # Update next.config if exists to use standalone mode
+          if [ -f "next.config.js" ]; then
+            if ! grep -q "output.*:.*['"]standalone['"]" next.config.js; then
+              sed -i "s/module.exports = {/module.exports = {\n  output: 'standalone',/" next.config.js
+            fi
+          elif [ -f "next.config.mjs" ]; then
+            if ! grep -q "output.*:.*['"]standalone['"]" next.config.mjs; then
+              sed -i "s/const nextConfig = {/const nextConfig = {\n  output: 'standalone',/" next.config.mjs
+            fi
+          fi
 
       - name: npm install, build, and test
         working-directory: ./frontend
@@ -36,13 +51,43 @@ jobs:
           npm run build --if-present
           npm run test --if-present -- --passWithNoTests || true
 
-      - name: Zip artifact for deployment
+      - name: Prepare deployment package
         run: |
           mkdir -p deployment
-          # Copy everything EXCEPT node_modules
-          cd frontend
-          find . -type f -not -path "./node_modules/*" -not -path "./.next/cache/*" | cpio -pdm ../deployment/
-          cd ../deployment
+          
+          # Check if it's a standalone Next.js build
+          if [ -d "frontend/.next/standalone" ]; then
+            echo "Using Next.js standalone build"
+            cp -r frontend/.next/standalone/* deployment/
+            # Copy static assets
+            mkdir -p deployment/.next
+            cp -r frontend/.next/static deployment/.next/ 2>/dev/null || true
+            cp -r frontend/public deployment/ 2>/dev/null || true
+            # Copy node_modules from standalone
+            if [ ! -d "deployment/node_modules" ]; then
+              cp -r frontend/node_modules deployment/ 2>/dev/null || true
+            fi
+          else
+            echo "Using standard Next.js build - copying all necessary files"
+            # Copy all build artifacts
+            cp -r frontend/.next deployment/
+            cp -r frontend/public deployment/ 2>/dev/null || true
+            cp frontend/package.json deployment/
+            cp frontend/package-lock.json deployment/ 2>/dev/null || true
+            # Copy node_modules (production ready)
+            cd frontend
+            npm ci --omit=dev
+            cd ..
+            cp -r frontend/node_modules deployment/
+            # Copy any Next.js config files
+            cp frontend/next.config.* deployment/ 2>/dev/null || true
+          fi
+          
+          # Ensure .env files are copied
+          cp frontend/.env.production deployment/ 2>/dev/null || true
+          cp frontend/.env.local deployment/ 2>/dev/null || true
+          
+          cd deployment
           zip -r ../release.zip .
 
       - name: Upload artifact for deployment job
@@ -81,4 +126,4 @@ jobs:
         with:
           app-name: 'expandev-02'
           package: .
-          startup-command: 'npm install --production && npm start'
+          startup-command: 'if [ -f server.js ]; then node server.js; else npm run start; fi'
